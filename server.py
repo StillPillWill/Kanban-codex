@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Kanban board and stdio MCP server for independent Codex chats."""
+"""Local Kanban board with agent CLI commands and an optional stdio MCP server."""
 
 from __future__ import annotations
 
@@ -459,6 +459,7 @@ def release_task(task_id: str, token: str, note: str = "") -> dict:
 
 
 def mcp_tools() -> list[dict]:
+    """Tool definitions for the optional stdio MCP interface."""
     return [
         {"name": "board_list_tasks", "description": "List current board tasks and their statuses. Use this before claiming work.", "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "description": "Optional status filter: backlog, ready, in_progress, review, blocked, or done."}}, "additionalProperties": False}},
         {"name": "board_claim_task", "description": "Atomically claim one Ready task after every prerequisite is Done. The board blocks another live claim with an overlapping file scope in the same repository and prevents a worktree from owning multiple tasks. Pass a unique chat label and the full worktree path from git rev-parse --show-toplevel. Save the returned lease_token and pass it to every other task tool.", "inputSchema": {"type": "object", "properties": {"task_id": {"type": "string"}, "agent_id": {"type": "string", "description": "A short, unique chat label shown on the board."}, "worktree": {"type": "string", "description": "The unique worktree path; get it with git rev-parse --show-toplevel."}}, "required": ["task_id", "agent_id", "worktree"], "additionalProperties": False}},
@@ -501,6 +502,7 @@ def mcp_response(request_id, result=None, error=None) -> dict:
 
 
 def mcp_main() -> None:
+    """Run the optional stdio MCP server when explicitly invoked."""
     init_db()
     for raw in sys.stdin:
         request_id = None
@@ -512,7 +514,7 @@ def mcp_main() -> None:
             result = None
             if method == "initialize":
                 result = {"protocolVersion": params.get("protocolVersion", "2025-03-26"), "capabilities": {"tools": {"listChanged": False}}, "serverInfo": {"name": "local-agent-board", "version": "1.0.0"}}
-            elif method == "notifications/initialized" or method == "notifications/cancelled":
+            elif method in {"notifications/initialized", "notifications/cancelled"}:
                 continue
             elif method == "ping":
                 result = {}
@@ -533,7 +535,7 @@ def mcp_main() -> None:
                 print(json.dumps(mcp_response(request_id, result=result), ensure_ascii=False), flush=True)
         except Exception as exc:
             if request_id is not None:
-                print(json.dumps(mcp_response(request_id, error={"code": -32000, "message": str(exc)}), ensure_ascii=False), flush=True)
+                print(json.dumps(mcp_response(request_id, error={"code": -32000, "message": str(exc)}), ensure_ascii=False, default=str), flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -563,10 +565,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/board":
             return self.send_json(board_tasks())
-        if path == "/api/config":
-            server_path = str((ROOT / "server.py").resolve()).replace("\\", "/")
-            config = f'[mcp_servers.agent_board]\ncommand = "python"\nargs = ["{server_path}", "--mcp"]\n'
-            return self.send_json({"config": config, "server_path": server_path, "db_path": str(DB_PATH)})
+        if path == "/api/info":
+            return self.send_json({"server_path": str((ROOT / "server.py").resolve()).replace("\\", "/"), "db_path": str(DB_PATH)})
         if path.startswith("/api/tasks/") and path.endswith("/events"):
             task_id = unquote(path[len("/api/tasks/"):-len("/events")].strip("/"))
             try:
@@ -656,14 +656,56 @@ def web_main() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--web", action="store_true", help="Run the local board interface")
-    group.add_argument("--mcp", action="store_true", help="Run the MCP stdio server for Codex")
+    parser.add_argument("--web", action="store_true", help="Run the local board interface")
+    parser.add_argument("--mcp", action="store_true", help="Run the optional MCP server over stdio")
+    commands = parser.add_subparsers(dest="command")
+    commands.add_parser("web", help="Run the local board interface")
+    listing = commands.add_parser("list", help="List board tasks as JSON")
+    listing.add_argument("--status", choices=sorted(STATUSES), help="Filter by task status")
+    claim = commands.add_parser("claim", help="Atomically claim a Ready task")
+    claim.add_argument("task_id")
+    claim.add_argument("--agent", required=True, help="Unique short label for this chat")
+    claim.add_argument("--worktree", required=True, help="Dedicated worktree path for this chat")
+    for name, help_text in (("heartbeat", "Renew a claim for two hours"), ("progress", "Update progress or mark the task blocked"), ("complete", "Submit the task for owner review"), ("release", "Release the task back to Ready")):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("task_id")
+        command.add_argument("--token", required=True, help="Lease token returned by claim")
+        if name == "progress":
+            command.add_argument("--note", default="")
+            command.add_argument("--blocked", action="store_true")
+        elif name == "complete":
+            command.add_argument("--summary", default="")
+        elif name == "release":
+            command.add_argument("--note", default="")
     args = parser.parse_args()
-    if args.web:
-        web_main()
-    else:
+    if args.mcp:
         mcp_main()
+        return
+    if args.web or args.command == "web":
+        web_main()
+        return
+    if not args.command:
+        parser.error("Choose --web, --mcp, or an agent command")
+    try:
+        init_db()
+        if args.command == "list":
+            result = board_tasks()
+            if args.status:
+                result["tasks"] = [task for task in result["tasks"] if task["status"] == args.status]
+        elif args.command == "claim":
+            result = claim_task(args.task_id, args.agent, args.worktree)
+        elif args.command == "heartbeat":
+            result = heartbeat(args.task_id, args.token)
+        elif args.command == "progress":
+            result = update_progress(args.task_id, args.token, args.note, "blocked" if args.blocked else "in_progress")
+        elif args.command == "complete":
+            result = complete_task(args.task_id, args.token, args.summary)
+        elif args.command == "release":
+            result = release_task(args.task_id, args.token, args.note)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    except (ValueError, KeyError, sqlite3.Error) as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":

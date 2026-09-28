@@ -21,7 +21,7 @@
       </div>
       <div class="top-actions">
         <span class="local-indicator"><span></span> Local board</span>
-        <button class="button button-quiet" id="connect-button" type="button"><span class="button-icon">⌘</span> Connect Codex</button>
+        <button class="button button-quiet" id="instructions-button" type="button"><span class="button-icon">ⓘ</span> Agent instructions</button>
         <button class="button button-primary" id="new-task-button" type="button"><span class="button-icon">＋</span> New task</button>
       </div>
     </header>
@@ -91,13 +91,13 @@
 
   <dialog class="modal setup-modal" id="setup-dialog" aria-labelledby="setup-title">
     <div class="modal-form">
-      <div class="modal-heading"><div><div class="eyebrow">One-time setup</div><h2 id="setup-title">Connect Codex chats</h2></div><button class="close-button" id="setup-close" type="button" aria-label="Close dialog">×</button></div>
+      <div class="modal-heading"><div><div class="eyebrow">Work queue guide</div><h2 id="setup-title">Use the board with Codex chats</h2></div><button class="close-button" id="setup-close" type="button" aria-label="Close dialog">×</button></div>
       <ol class="setup-steps">
-        <li><span>1</span><div><strong>Agent Board is added on this PC</strong><p>The MCP server is in this PC’s Codex config. Restart Codex once, then type <code>/mcp</code> in a chat to confirm the board tools are available. For another PC, add a <b>STDIO</b> server in <b>Settings → MCP servers</b> using command <code>python</code> and the config entry below.</p></div></li>
-        <li><span>2</span><div><strong>One shared connection for this PC</strong><p>After restart, all new Codex chats on this host can read and claim tasks from the same local board.</p></div></li>
-        <li><span>3</span><div><strong>Start one worktree per task</strong><p>Open a separate chat in a fresh worktree, then paste that task’s agent prompt. Different worktrees keep file edits isolated.</p></div></li>
+        <li><span>1</span><div><strong>Define independent work</strong><p>Give each task a clear file scope. Add prerequisites when one task must wait for another; the claim command checks dependencies and locks atomically.</p></div></li>
+        <li><span>2</span><div><strong>Use one fresh worktree per chat</strong><p>Open a separate Codex chat in its own worktree for each task, then paste the card’s <b>Copy agent prompt</b>. The prompt contains the local commands for claiming and updating the task.</p></div></li>
+        <li><span>3</span><div><strong>Claim before editing</strong><p>The chat uses the local command-line program to claim the card. If the claim fails, it must leave the files untouched. Review and merge the worktrees after agents finish.</p></div></li>
       </ol>
-      <div class="config-block"><div class="config-title"><span>config.toml</span><button class="text-button" id="copy-config" type="button">Copy config</button></div><pre id="config-text">Loading configuration…</pre></div>
+      <div class="config-block"><div class="config-title"><span>Local board command</span><button class="text-button" id="copy-cli-path" type="button">Copy path</button></div><pre id="agent-cli-path">Loading path…</pre></div>
       <div class="setup-footer"><span class="setup-lock">▣</span><span>This board runs on <code>127.0.0.1</code> and stores its tasks in a local SQLite file.</span></div>
     </div>
   </dialog>

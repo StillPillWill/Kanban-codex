@@ -1,38 +1,39 @@
 # Agent Board
 
-A local task board shared by independent Codex chats on this PC. It uses Python's standard library and a SQLite database in `data/board.sqlite3`.
+A local task board shared by independent Codex chats on this PC. It uses Python's standard library and stores cards, claims, dependencies, and activity in `data/board.sqlite3`.
 
 ## Start the board
 
-Run `Start-AgentBoard.ps1`. It starts the local service in the background and opens `http://127.0.0.1:8765` in your browser. The service only listens on this PC. Run `Stop-AgentBoard.ps1` when you want to stop it.
+Run `Start-AgentBoard.ps1`. It starts the local web interface in the background and opens `http://127.0.0.1:8765`. The service listens only on this PC. Run `Stop-AgentBoard.ps1` when you want to stop it.
 
-Keep this folder in the same place after connecting Codex; the MCP configuration points to `server.py` here.
+## Give work to Codex chats
 
-## Connect Codex once
+1. Make one card per independent change. Describe the work, list the files or folders it may edit, and add prerequisites when it must wait for another task.
+2. Use paths relative to the repository. A folder path ends in `/`. Matching scopes in the same repository cannot be claimed at the same time. An empty scope locks the entire repository.
+3. Mark the card Ready when its brief is complete. For each task, start a separate Codex chat in a fresh worktree and paste the card's **Copy agent prompt**.
+4. The prompt tells the chat to claim the card through the local command-line program before editing. The CLI and web board use the same SQLite database; claims are serialized and checked atomically.
+5. Claims require every prerequisite task to be Done. The board checks this again when the claim is made, so a waiting card cannot be claimed by racing it from another chat.
+6. Claims expire after two hours without a heartbeat. The prompt includes commands for renewing, updating, blocking, completing, or releasing a claim. A task in Review keeps its scope locked until you accept or reopen it.
+7. Review and merge each worktree yourself. The board prevents overlapping declared scopes from being claimed together; separate worktrees isolate each chat's edits until review.
 
-The Agent Board MCP server has already been added to Codex's global config on this PC. Restart Codex once to load it, then type `/mcp` in a chat to confirm the board tools are listed. The **Connect Codex** button shows the config entry in case you need to connect another PC or restore the setup.
+## Agent command line
 
-Restart Codex after adding the server. On this PC, the same MCP configuration is used by Codex desktop, CLI, and IDE chats. New chats can then read and claim tasks through the Agent Board tools.
+The web interface provides task management. Agents use the same `server.py` file directly, without changing Codex configuration. Commands print JSON; a rejected claim exits with an error.
 
-## Keep agents from colliding
+```powershell
+python server.py list --status ready
+python server.py claim AB-123456 --agent 'chat settings search' --worktree (git rev-parse --show-toplevel)
+python server.py heartbeat AB-123456 --token '<lease-token>'
+python server.py progress AB-123456 --token '<lease-token>' --note 'Updated the form'
+python server.py progress AB-123456 --token '<lease-token>' --blocked --note 'Waiting for API contract'
+python server.py complete AB-123456 --token '<lease-token>' --summary 'Implemented settings search'
+python server.py release AB-123456 --token '<lease-token>' --note 'Handing off remaining work'
+```
 
-1. Put each independent change in its own task. Give parallel tasks the same repository label and separate file scopes, such as `src/ui/` and `src/api/`.
-2. Use paths relative to the repository. A folder path must end with `/`. The board compares paths case-insensitively and blocks overlapping claims in the same repository.
-3. If a task has no scope, it takes an exclusive lock on that whole repository. This is useful for work that could touch anything.
-4. If a task depends on another, select that prerequisite in **Wait for tasks**. Agents cannot claim it until every prerequisite is marked **Done**. Moving a prerequisite out of Done blocks dependent claims again.
-5. Start every Codex chat in a fresh worktree. On a Ready card, choose **Copy agent prompt** and send that prompt to the chat. The agent claims the card before editing and must keep work inside its scope. The board allows only one task per worktree.
-6. A claim expires after two hours without a heartbeat. Long-running agents should call `board_heartbeat`. When an agent submits for review, its scope stays locked until you accept or reopen the card.
-7. Review and merge worktrees yourself. The board prevents two chats from claiming the same task, unmet prerequisites, or overlapping declared scopes; separate worktrees isolate their actual edits until you review them.
+## Optional MCP server
 
-## MCP tools
-
-- `board_list_tasks`: inspect board cards.
-- `board_claim_task`: atomically claim a Ready card and receive its lease token.
-- `board_heartbeat`: extend the claim.
-- `board_update_progress`: post a progress note or mark a task blocked.
-- `board_complete_task`: move a task into Review while retaining its scope lock.
-- `board_release_task`: return unfinished work to Ready and unlock it.
+The source also includes an optional stdio MCP server for users who choose to run it with an MCP client: `python server.py --mcp`. This project does not add that server to Codex configuration. The default board prompts use the local command-line interface.
 
 ## Data and recovery
 
-All task data and activity history live in `data/board.sqlite3`. Copy that file to back up the board. The MCP server and board interface use the same database, so changes appear across chats within a few seconds.
+Back up `data/board.sqlite3` to preserve tasks and their activity history. The database, logs, and process marker are ignored by Git.

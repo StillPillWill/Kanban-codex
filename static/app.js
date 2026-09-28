@@ -185,9 +185,35 @@ function taskFormPayload() {
   };
 }
 
-function agentPrompt(task) {
+function agentPrompt(task, serverPath) {
+  const cli = `'${String(serverPath).replace(/'/g, "''")}'`;
   const scope = task.scope?.length ? task.scope.map(path => `- ${path}`).join('\n') : '- No paths are listed. This task has an exclusive lock on the whole repository.';
-  return `Work on Agent Board task ${task.id}: ${task.title}\n\nBefore editing:\n1. Confirm this chat is using a dedicated Codex worktree for this task. If it is not, ask to restart in a fresh worktree before touching files.\n2. Call board_list_tasks and read the full card. Run git rev-parse --show-toplevel, then call board_claim_task with task_id "${task.id}", a unique short chat label as agent_id, and that full path as worktree. Keep the returned lease_token. If the claim is denied, do not edit any files.\n3. Work only in this task's declared scope. Paths are relative to the repository; a path ending in / covers that folder and its descendants.\n\nDeclared scope:\n${scope}\n\nKeep this work isolated in the worktree. Do not merge or cherry-pick. Update the board with board_update_progress when your status changes, and renew the claim with board_heartbeat during long work. When implementation is ready, summarize the change and call board_complete_task. The board owner will review it and release the scope lock.`;
+  return `Work on Agent Board task ${task.id}: ${task.title}
+
+The board is shared through a local command-line program. Use these commands from PowerShell; they read and update the same board as the browser. A successful claim is atomic, and the board itself rejects overlapping scopes and unmet prerequisites.
+
+Before editing:
+1. Confirm this chat is in its own fresh Codex worktree for this task. Do not edit in a worktree another chat is using.
+2. Inspect the ready queue with: python ${cli} list --status ready
+3. Claim this task before touching files. Run:
+   $worktree = (git rev-parse --show-toplevel).Trim()
+   python ${cli} claim ${task.id} --agent 'choose a unique short chat label' --worktree $worktree
+   Read the JSON output and save its lease_token. If the command fails or returns an error, do not edit files.
+4. Stay within the declared scope below. Paths are relative to the repository; a folder scope ends with /.
+
+Declared scope:
+${scope}
+
+During work, renew a long-running claim about once an hour:
+   python ${cli} heartbeat ${task.id} --token '<lease_token>'
+
+If blocked, post a note:
+   python ${cli} progress ${task.id} --token '<lease_token>' --blocked --note 'brief reason'
+
+When ready for review, submit a summary:
+   python ${cli} complete ${task.id} --token '<lease_token>' --summary 'what changed and what you checked'
+
+Do not merge or cherry-pick. The board owner reviews the work and accepts or reopens the task; its scope stays locked until then.`;
 }
 
 async function copyText(text) {
@@ -213,7 +239,10 @@ function wireCardActions() {
       try {
         if (action === 'details') return openDetails(task);
         if (action === 'edit') return openEditTask(task);
-        if (action === 'prompt') return copyText(agentPrompt(task));
+        if (action === 'prompt') {
+          const info = await api('/api/info');
+          return copyText(agentPrompt(task, info.server_path));
+        }
         if (action === 'ready') await api(`/api/tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: { status: 'ready' } });
         if (action === 'approve') await api(`/api/tasks/${encodeURIComponent(task.id)}/review`, { method: 'POST', body: { action: 'approve' } });
         if (action === 'reopen') await api(`/api/tasks/${encodeURIComponent(task.id)}/review`, { method: 'POST', body: { action: 'reopen' } });
@@ -277,24 +306,24 @@ async function openDetails(task) {
   } catch { eventBox.innerHTML = ''; }
 }
 
-async function setupCodex() {
+async function showAgentInstructions() {
   setupDialog.showModal();
   try {
-    const config = await api('/api/config');
-    document.querySelector('#config-text').textContent = config.config;
-  } catch (error) { document.querySelector('#config-text').textContent = error.message; }
+    const info = await api('/api/info');
+    document.querySelector('#agent-cli-path').textContent = info.server_path;
+  } catch (error) { document.querySelector('#agent-cli-path').textContent = error.message; }
 }
 
 document.querySelector('#new-task-button').addEventListener('click', () => openNewTask('backlog'));
-document.querySelector('#connect-button').addEventListener('click', setupCodex);
-document.querySelector('#instructions-link').addEventListener('click', setupCodex);
+document.querySelector('#instructions-button').addEventListener('click', showAgentInstructions);
+document.querySelector('#instructions-link').addEventListener('click', showAgentInstructions);
 document.querySelector('#task-close').addEventListener('click', () => taskDialog.close());
 document.querySelector('#task-cancel').addEventListener('click', () => taskDialog.close());
 document.querySelector('#setup-close').addEventListener('click', () => setupDialog.close());
 document.querySelector('#detail-close').addEventListener('click', () => detailDialog.close());
 document.querySelector('#refresh-button').addEventListener('click', () => refreshBoard());
 document.querySelector('#search-input').addEventListener('input', event => { state.search = event.target.value; render(); });
-document.querySelector('#copy-config').addEventListener('click', () => copyText(document.querySelector('#config-text').textContent));
+document.querySelector('#copy-cli-path').addEventListener('click', () => copyText(document.querySelector('#agent-cli-path').textContent));
 
 document.querySelector('#task-form').addEventListener('submit', async event => {
   if (event.submitter?.value === 'cancel') return;
