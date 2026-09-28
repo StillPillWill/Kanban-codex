@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="A shared local task board for independent Codex chats.">
+  <title>Agent Board · Codex task queue</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div>
+          <div class="brand-name">Agent Board</div>
+          <div class="brand-caption">One queue. Independent chats.</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="local-indicator"><span></span> Local board</span>
+        <button class="button button-quiet" id="connect-button" type="button"><span class="button-icon">⌘</span> Connect Codex</button>
+        <button class="button button-primary" id="new-task-button" type="button"><span class="button-icon">＋</span> New task</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="page-intro" aria-labelledby="page-title">
+        <div>
+          <div class="eyebrow">Parallel work, kept in its lane</div>
+          <h1 id="page-title">Task board</h1>
+          <p class="intro-copy">Give each Codex chat one task, one worktree, and a clear set of files.</p>
+        </div>
+        <div class="sync-stamp"><span class="sync-dot"></span><span id="sync-label">Connecting to the shared board…</span></div>
+      </section>
+
+      <section class="overview" aria-label="Board summary">
+        <article class="metric-card metric-total"><div class="metric-label">Open work</div><div class="metric-value" id="metric-open">0</div><div class="metric-foot">tasks in the queue</div></article>
+        <article class="metric-card"><div class="metric-label">Ready to claim</div><div class="metric-value" id="metric-ready">0</div><div class="metric-foot">waiting for a chat</div></article>
+        <article class="metric-card"><div class="metric-label">Chats working</div><div class="metric-value" id="metric-working">0</div><div class="metric-foot">active task locks</div></article>
+        <article class="metric-card"><div class="metric-label">Needs review</div><div class="metric-value" id="metric-review">0</div><div class="metric-foot">file scope stays locked</div></article>
+      </section>
+
+      <section class="board-toolbar" aria-label="Board tools">
+        <div class="board-label"><span class="board-glyph" aria-hidden="true">▦</span><strong>Work queue</strong><span class="board-divider"></span><span class="board-detail" id="task-count">0 tasks</span></div>
+        <label class="search-box"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Search tasks, chats, files…" aria-label="Search tasks"></label>
+        <button class="icon-button" id="refresh-button" type="button" title="Refresh board" aria-label="Refresh board">↻</button>
+      </section>
+
+      <section class="board-viewport" aria-label="Kanban board">
+        <div class="board-columns" id="board-columns"></div>
+      </section>
+
+      <section class="bottom-note" aria-label="Conflict prevention">
+        <span class="note-shield" aria-hidden="true">◈</span>
+        <div><strong>Keep edits separate</strong><span>Start every chat in its own Codex worktree. Add file paths to each task; overlapping scopes in the same repo cannot be claimed at the same time.</span></div>
+        <button class="text-button" id="instructions-link" type="button">See setup instructions <span aria-hidden="true">↗</span></button>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="modal" id="task-dialog" aria-labelledby="task-dialog-title">
+    <form id="task-form" method="dialog" class="modal-form">
+      <div class="modal-heading">
+        <div><div class="eyebrow" id="task-mode">New card</div><h2 id="task-dialog-title">Create a task</h2></div>
+        <button class="close-button" id="task-close" type="button" aria-label="Close dialog">×</button>
+      </div>
+      <input id="task-id" type="hidden">
+      <label class="field-label" for="task-title">Task name <span class="required">*</span></label>
+      <input class="text-field" id="task-title" name="title" maxlength="180" required placeholder="Add search to the settings page">
+      <label class="field-label" for="task-brief">What should the agent do?</label>
+      <textarea class="text-field text-area" id="task-brief" name="brief" rows="4" placeholder="Describe the change, relevant context, and anything to avoid."></textarea>
+      <div class="field-grid">
+        <div><label class="field-label" for="task-repo">Repository label</label><input class="text-field" id="task-repo" name="repo" maxlength="180" placeholder="main repo"></div>
+        <div><label class="field-label" for="task-priority">Priority</label><select class="text-field select-field" id="task-priority" name="priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select></div>
+      </div>
+      <label class="field-label" for="task-scope">Files or folders this chat may edit</label>
+      <textarea class="text-field text-area scope-field" id="task-scope" name="scope" rows="3" placeholder="src/settings/\nsrc/types.ts"></textarea>
+      <div class="field-hint"><span class="hint-mark">i</span><span>One path per line. End folders with <code>/</code>. Matching paths lock each other; leave empty to lock the whole repository.</span></div>
+      <div class="field-label">Wait for tasks <span class="field-optional">optional</span></div>
+      <div class="dependency-options" id="dependency-options" role="group" aria-label="Prerequisite tasks"></div>
+      <div class="field-hint"><span class="hint-mark">i</span><span>Agents cannot claim this task until every selected task is Done.</span></div>
+      <label class="field-label" for="task-acceptance">Done when <span class="field-optional">optional</span></label>
+      <textarea class="text-field text-area" id="task-acceptance" name="acceptance" rows="2" placeholder="One acceptance check per line"></textarea>
+      <label class="ready-toggle"><input id="task-ready" type="checkbox"><span class="toggle-track"></span><span><strong>Ready for an agent</strong><small>Otherwise, keep it in Backlog until you finish the brief.</small></span></label>
+      <div class="modal-actions"><button class="button button-danger hidden" id="delete-task-button" type="button">Delete task</button><span class="modal-spacer"></span><button class="button button-quiet" id="task-cancel" type="button">Cancel</button><button class="button button-primary" id="save-task-button" value="default" type="submit">Save task</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="modal setup-modal" id="setup-dialog" aria-labelledby="setup-title">
+    <div class="modal-form">
+      <div class="modal-heading"><div><div class="eyebrow">One-time setup</div><h2 id="setup-title">Connect Codex chats</h2></div><button class="close-button" id="setup-close" type="button" aria-label="Close dialog">×</button></div>
+      <ol class="setup-steps">
+        <li><span>1</span><div><strong>Agent Board is added on this PC</strong><p>The MCP server is in this PC’s Codex config. Restart Codex once, then type <code>/mcp</code> in a chat to confirm the board tools are available. For another PC, add a <b>STDIO</b> server in <b>Settings → MCP servers</b> using command <code>python</code> and the config entry below.</p></div></li>
+        <li><span>2</span><div><strong>One shared connection for this PC</strong><p>After restart, all new Codex chats on this host can read and claim tasks from the same local board.</p></div></li>
+        <li><span>3</span><div><strong>Start one worktree per task</strong><p>Open a separate chat in a fresh worktree, then paste that task’s agent prompt. Different worktrees keep file edits isolated.</p></div></li>
+      </ol>
+      <div class="config-block"><div class="config-title"><span>config.toml</span><button class="text-button" id="copy-config" type="button">Copy config</button></div><pre id="config-text">Loading configuration…</pre></div>
+      <div class="setup-footer"><span class="setup-lock">▣</span><span>This board runs on <code>127.0.0.1</code> and stores its tasks in a local SQLite file.</span></div>
+    </div>
+  </dialog>
+
+  <dialog class="modal detail-modal" id="detail-dialog" aria-labelledby="detail-title">
+    <div class="modal-form"><div class="modal-heading"><div><div class="eyebrow" id="detail-id">Task details</div><h2 id="detail-title"></h2></div><button class="close-button" id="detail-close" type="button" aria-label="Close dialog">×</button></div><div id="detail-content"></div><div class="event-list" id="event-list"></div></div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
